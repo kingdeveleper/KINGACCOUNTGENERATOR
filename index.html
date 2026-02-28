@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Account Generator — Log Parser & Filter</title>
+
+<!-- Google Identity Services (optional – local mode works without it) -->
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#f6f8fb;--card:#0fff;--muted:#667085;--accent-start:#6ee7b7;--accent-end:#60a5fa;--pill:#eef2ff;--danger:#ffebe8;--text:#0b1220}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;color:var(--text)}
+  body{background:var(--bg);padding:18px}
+  .wrap{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:360px 1fr;gap:18px;align-items:start}
+  .card{background:#fff;border-radius:10px;padding:14px;box-shadow:0 8px 30px rgba(2,6,23,0.06)}
+  h1{font-size:18px;margin:0}
+  .muted{color:var(--muted);font-size:13px}
+  .kw-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .controls{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
+  .btn-primary{background:linear-gradient(90deg,var(--accent-start),var(--accent-end));border:none;color:#fff;padding:9px 12px;border-radius:9px;cursor:pointer;font-weight:700}
+  .btn-ghost{background:transparent;border:1px solid rgba(12,18,30,0.06);padding:9px 12px;border-radius:9px;cursor:pointer}
+  .results{min-height:240px;max-height:560px;overflow:auto;padding:12px;border-radius:8px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);border:1px solid rgba(12,18,30,0.04);font-family:monospace;font-size:13px}
+  .small{font-size:12px;color:var(--muted)}
+  .error{background:var(--danger);padding:8px;border-radius:8px;color:#9b1b00;font-size:13px;display:none}
+  .small-inline{display:inline-block;font-size:12px;color:var(--muted);margin-left:8px}
+  .top-right{display:flex;gap:8px;align-items:center}
+  @media (max-width:920px){ .wrap{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Account Generator</h1>
+      <div class="small muted">Filter & export accounts from logs. Local deduplication included.</div>
+
+      <hr style="margin:12px 0">
+
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-weight:700">Mode</div>
+          <div id="signedInAs" class="small muted">Local (no login required)</div>
+        </div>
+        <div class="top-right">
+          <div id="gsiBtn"></div>
+          <button id="signOutBtn" class="btn-ghost hidden">Sign out</button>
+        </div>
+      </div>
+
+      <hr style="margin:12px 0">
+
+      <div class="muted">Keywords</div>
+      <div class="kw-row" id="kwRow">
+        <label><input class="kw" type="checkbox" value="mtacc"> mtacc</label>
+        <label><input class="kw" type="checkbox" value="roblox.com"> roblox</label>
+        <label><input class="kw" type="checkbox" value="garena.com"> garena.com</label>
+        <label><input class="kw" type="checkbox" value="facebook.com"> facebook.com</label>
+        <label><input class="kw" type="checkbox" value="crunchyroll.com"> Crunchyroll</label>
+        <label><input class="kw" type="checkbox" value="netease.com"> netease.com</label>
+        <label><input class="kw" type="checkbox" value="expressvpn.com"> expressvpn.com</label>
+        <label><input class="kw" type="checkbox" value="tiktok.com"> tiktok.com</label>
+      </div>
+
+      <label class="small" style="display:block;margin-top:10px">Email filter</label>
+      <select id="emailFilter" style="width:100%;padding:8px;border-radius:8px">
+        <option value="mix">Mix</option>
+        <option value="email_only">Email only</option>
+        <option value="without_email">Without email</option>
+      </select>
+
+      <label class="small" style="display:block;margin-top:10px">Lines to return (N)</label>
+      <input id="lineLimit" type="number" min="1" max="500" value="50" style="width:100%;padding:8px;border-radius:8px" />
+
+      <label style="display:block;margin-top:10px"><input id="randomMode" type="checkbox" /> Random sample (uniform)</label>
+      <div class="small muted" style="margin-top:6px">When enabled the app returns N random lines that match keywords, excluding lines already shown to other users (remote) and on this browser (local).</div>
+
+      <label class="small" style="display:block;margin-top:10px">Designated line (optional, 1-based)</label>
+      <input id="designatedLine" type="number" min="1" placeholder="e.g. 1234" style="width:100%;padding:8px;border-radius:8px" />
+
+      <label class="small" style="display:block;margin-top:10px">Source logs (leave empty to use bundled logs (auto-loaded))</label>
+      <input id="fileInput" type="file" accept=".txt" style="width:100%" />
+
+      <hr style="margin:12px 0">
+
+      <h3 style="margin:0 0 8px 0">Dedupe & auth (required)</h3>
+      <label style="display:block"><input id="persistLocal" type="checkbox" checked /> Persist seen locally</label>
+      <div class="small muted">Local persistence prevents repeats in the same browser.</div>
+
+      <label style="display:block;margin-top:10px"><input id="useRemote" type="checkbox" /> Enable remote dedupe (cross-user)</label>
+      <input id="remoteUrl" type="text" placeholder="Remote dedupe API base URL (e.g. https://example.com/api)" style="width:100%;padding:8px;border-radius:8px;margin-top:6px" />
+      <div class="small muted" style="margin-top:6px">If enabled the client will require Google sign-in and will call server endpoints to ask/report seen lines.</div>
+
+      <div class="controls" style="margin-top:12px">
+        <button id="searchBtn" class="btn-primary">Search</button>
+        <button id="downloadBtn" class="btn-ghost" disabled>Download</button>
+      </div>
+
+      <div class="small muted" style="margin-top:10px">
+        Tip: upload your own <code>.txt</code> log file, or use the bundled logs.
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>Results</strong>
+          <div id="resultsMeta" class="small muted">no results</div>
+        </div>
+        <div id="results" class="results">Results will appear here.</div>
+      </div>
+
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
+        <div id="errorBox" class="error"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* -------------------------
+  Configuration
+  NOTE: you gave an API key string (looks like an API key). Google Sign-In needs an OAuth Client ID.
+  If you have a proper OAuth client ID (xxxxx.apps.googleusercontent.com) replace the value below.
+---------------------------*/
+const GOOGLE_CLIENT_ID = 'AIzaSyCrAr055YoP2qtqlj95x6R2Amn6hjezhw4'; // <-- inserted as you requested
+
+/* -------------------------
+  Elements
+---------------------------*/
+const els = {
+  gsiBtn: document.getElementById('gsiBtn'),
+  signOutBtn: document.getElementById('signOutBtn'),
+  signedInAs: document.getElementById('signedInAs'),
+  kwCheckboxes: Array.from(document.querySelectorAll('.kw')),
+  emailFilter: document.getElementById('emailFilter'),
+  lineLimit: document.getElementById('lineLimit'),
+  randomMode: document.getElementById('randomMode'),
+  designatedLine: document.getElementById('designatedLine'),
+  fileInput: document.getElementById('fileInput'),
+  searchBtn: document.getElementById('searchBtn'),
+  downloadBtn: document.getElementById('downloadBtn'),
+  results: document.getElementById('results'),
+  resultsMeta: document.getElementById('resultsMeta'),
+  errorBox: document.getElementById('errorBox'),
+  persistLocal: document.getElementById('persistLocal'),
+  useRemote: document.getElementById('useRemote'),
+  remoteUrl: document.getElementById('remoteUrl'),
+};
+
+/* -------------------------
+  State
+---------------------------*/
+const HARD_MAX = 500;
+let globalSeen = new Set(); // local persisted set
+const LOCAL_SEEN_KEY = 'seen_lines_v1';
+let resultsSet = [];
+let session = { signedIn: false, idToken: null, sessionToken: null, user: null };
+
+/* -------------------------
+  Load local seen
+---------------------------*/
+(function loadLocalSeen(){
+  try{
+    const raw = localStorage.getItem(LOCAL_SEEN_KEY);
+    if(raw){
+      const arr = JSON.parse(raw);
+      if(Array.isArray(arr)) globalSeen = new Set(arr);
+    }
+  }catch(e){ console.warn('loadLocalSeen failed', e); }
+})();
+
+/* -------------------------
+  Google Sign-in (GSI) — optional, falls back to local mode
+---------------------------*/
+function onGsiLoad(){
+  if(typeof google !== 'undefined' && GOOGLE_CLIENT_ID && GOOGLE_CLIENT_ID !== 'GOOGLE_CLIENT_ID_HERE'){
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleCredentialResponse,
+      ux_mode: 'popup'
+    });
+    google.accounts.id.renderButton(els.gsiBtn, { theme: 'outline', size: 'medium' });
+  } else {
+    // Local mode: auto sign-in without Google
+    session.signedIn = true;
+    session.user = { email: 'local-user' };
+    updateSignedInUI();
+  }
+}
+window.onload = onGsiLoad;
+
+async function handleCredentialResponse(resp){
+  if(!resp || !resp.credential) return;
+  const idToken = resp.credential;
+  session.idToken = idToken;
+  // If remote dedupe is enabled, authenticate with server to obtain session token
+  if(els.useRemote.checked && (els.remoteUrl.value||'').trim()){
+    try{
+      const serverBase = els.remoteUrl.value.replace(/\/+$/,'');
+      const r = await fetch(serverBase + '/auth', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ id_token: idToken })
+      });
+      if(!r.ok) throw new Error('Auth failed: ' + r.status);
+      const j = await r.json();
+      if(j && j.sessionToken && j.user){
+        session.sessionToken = j.sessionToken;
+        session.user = j.user;
+        session.signedIn = true;
+        updateSignedInUI();
+        return;
+      } else {
+        throw new Error('Invalid auth response');
+      }
+    }catch(e){
+      showError('Remote auth failed: ' + (e && e.message ? e.message : e));
+      // still mark local signed-in so overlay can unlock if you want local mode.
+      session.signedIn = true;
+      session.user = { email: 'local-only' };
+      updateSignedInUI();
+      return;
+    }
+  } else {
+    // remote not enabled — still mark user as signed in locally (id_token present)
+    session.signedIn = true;
+    try{
+      const payload = JSON.parse(atob(idToken.split('.')[1]));
+      session.user = { email: payload.email || payload['email'] || 'unknown' };
+    }catch(e){ session.user = { email: 'unknown' }; }
+    updateSignedInUI();
+  }
+}
+
+function updateSignedInUI(){
+  if(session.signedIn){
+    const label = (session.user && (session.user.email || session.user.name))
+      ? (session.user.email === 'local-user' ? 'Local mode (no login)' : (session.user.email || session.user.name))
+      : 'Signed in';
+    els.signedInAs.textContent = label;
+    els.gsiBtn.style.display = 'none';
+    els.signOutBtn.classList.add('hidden'); // hide sign-out in local mode
+  } else {
+    els.signedInAs.textContent = 'Not signed in';
+    els.gsiBtn.style.display = '';
+    els.signOutBtn.classList.add('hidden');
+  }
+}
+
+els.signOutBtn.addEventListener('click', () => {
+  try{ google.accounts.id.disableAutoSelect(); }catch(e){}
+  session = { signedIn:false, idToken:null, sessionToken:null, user:null };
+  updateSignedInUI();
+});
+
+/* -------------------------
+  Helpers: UI + errors
+---------------------------*/
+function showError(msg){
+  els.errorBox.style.display = 'block';
+  els.errorBox.textContent = msg;
+  setTimeout(()=>{ els.errorBox.style.display = 'none'; }, 6000);
+}
+function appendResultLine(line){
+  if(els.results.textContent.trim() === 'Results will appear here.' || els.results.textContent.trim()==='') els.results.innerHTML = '';
+  const d = document.createElement('div');
+  d.style.padding = '6px 4px';
+  d.style.borderBottom = '1px dashed rgba(12,18,30,0.04)';
+  d.textContent = line;
+  els.results.appendChild(d);
+}
+
+/* -------------------------
+  Stream helpers (file & fetch)
+---------------------------*/
+async function readFileInChunks(file, onChunk){
+  const chunkSize = 1024*1024;
+  let offset = 0;
+  let idx = 0;
+  while(offset < file.size){
+    const slice = file.slice(offset, offset + chunkSize);
+    const txt = await slice.text();
+    await onChunk(txt, ++idx);
+    offset += chunkSize;
+    await new Promise(r=>setTimeout(r, 0)); // yield
+  }
+  await onChunk('', ++idx);
+}
+async function fetchWithReader(onChunk){
+  const parts = ['logs_aa.txt','logs_ab.txt','logs_ac.txt','logs_ad.txt','logs_ae.txt','logs_af.txt'];
+  let globalIdx = 0;
+  for(const part of parts){
+    const resp = await fetch(part, {cache:'no-store'});
+    if(!resp.ok){ console.warn('Could not fetch '+part+' ('+resp.status+'), skipping'); continue; }
+    if(resp.body && resp.body.getReader){
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let done = false;
+      while(!done){
+        const {value, done: d} = await reader.read();
+        done = d;
+        const txt = value ? decoder.decode(value, {stream: !done}) : '';
+        await onChunk(txt, ++globalIdx);
+      }
+    } else {
+      const txt = await resp.text();
+      await onChunk(txt, ++globalIdx);
+    }
+  }
+  await onChunk('', ++globalIdx);
+  if(false){ // legacy single-file fallback (unused)
+  const txt = await (await fetch('logs.txt')).text();
+  await onChunk(txt, 1);
+  await onChunk('', 2);
+  }
+}
+
+/* -------------------------
+  Matching helper
+---------------------------*/
+function lineMatches(line, keywords, emailFilter){
+  if(!line) return false;
+  const t = (line||'').trim();
+  if(t.length === 0) return false;
+  const emailRx = /[\\w.+-]+@[\\w-]+\\.[\\w.-]+/;
+  const hasEmail = emailRx.test(t);
+  if(emailFilter === 'email_only' && !hasEmail) return false;
+  if(emailFilter === 'without_email' && hasEmail) return false;
+  if(keywords.length === 0) return true;
+  const low = t.toLowerCase();
+  for(const k of keywords){
+    if(low.includes(k.toLowerCase())) return true;
+  }
+  return false;
+}
+
+/* -------------------------
+  Remote dedupe helpers
+---------------------------*/
+async function remoteCheckCandidates(candidates){
+  const base = (els.remoteUrl.value||'').trim().replace(/\/+$/,'');
+  if(!base) return new Set();
+  try{
+    const r = await fetch(base + '/check', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': session.sessionToken ? ('Bearer ' + session.sessionToken) : ''
+      },
+      body: JSON.stringify({ lines: candidates })
+    });
+    if(!r.ok) return new Set();
+    const j = await r.json();
+    if(j && Array.isArray(j.seen)) return new Set(j.seen);
+    return new Set();
+  }catch(e){
+    console.warn('remoteCheck failed', e);
+    return new Set();
+  }
+}
+async function remoteReportDisplayed(lines){
+  const base = (els.remoteUrl.value||'').trim().replace(/\/+$/,'');
+  if(!base) return;
+  try{
+    await fetch(base + '/report', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': session.sessionToken ? ('Bearer ' + session.sessionToken) : ''
+      },
+      body: JSON.stringify({ lines })
+    });
+  }catch(e){ console.warn('remoteReport failed', e); }
+}
+
+/* -------------------------
+  Reservoir sampling (streaming)
+---------------------------*/
+async function reservoirSampleMatches({sourceFile, sampleSize, designatedIndex0, keywords, emailFilter, internalSample= null}) {
+  const target = Math.max(1, sampleSize);
+  const reservoir = [];
+  let matchesSeen = 0;
+  let buffer = '';
+  let lineIndex = 0;
+  let designatedValue = null;
+
+  function processLine(raw){
+    const ln = (raw||'').replace(/\\r?\\n/g,'');
+    if(ln.trim().length === 0){ lineIndex++; return; }
+    const key = ln.trim();
+    if(globalSeen.has(key)){ lineIndex++; return; }
+    if(typeof designatedIndex0 === 'number' && designatedIndex0 === lineIndex){
+      if(lineMatches(ln, keywords, emailFilter)){
+        designatedValue = ln;
+      }
+      lineIndex++;
+      return;
+    }
+    if(lineMatches(ln, keywords, emailFilter)){
+      matchesSeen++;
+      const m = (internalSample && Number.isFinite(internalSample)) ? internalSample : (target - (designatedValue ? 1 : 0));
+      if(m <= 0){ lineIndex++; return; }
+      if(reservoir.length < m) reservoir.push(ln);
+      else {
+        const r = Math.floor(Math.random() * matchesSeen);
+        if(r < m) reservoir[r] = ln;
+      }
+    }
+    lineIndex++;
+  }
+
+  async function onChunk(text){
+    buffer += text;
+    const parts = buffer.split(/\r?\n/);
+    buffer = parts.pop() || '';
+    for(const p of parts) processLine(p);
+  }
+
+  if(sourceFile) await readFileInChunks(sourceFile, onChunk);
+  else await fetchWithReader(onChunk);
+  if(buffer) processLine(buffer);
+
+  const candidates = [];
+  if(designatedValue && !globalSeen.has(designatedValue.trim())) candidates.push(designatedValue);
+  for(const r of reservoir) if(candidates.indexOf(r)===-1) candidates.push(r);
+  return candidates;
+}
+
+/* -------------------------
+  Main search flow
+---------------------------*/
+async function performSearch(){
+  els.searchBtn.disabled = true;
+  els.downloadBtn.disabled = true;
+  els.results.innerHTML = 'Searching...';
+  resultsSet = [];
+
+  try{
+    const remoteEnabled = !!els.useRemote.checked && (els.remoteUrl.value||'').trim();
+    if(remoteEnabled && !session.signedIn){
+      showError('You must sign in with Google before using remote dedupe.');
+      els.searchBtn.disabled = false;
+      return;
+    }
+
+    const nRaw = Number(els.lineLimit.value) || 50;
+    const N = Math.max(1, Math.min(HARD_MAX, nRaw));
+    const keywords = els.kwCheckboxes.filter(cb => cb.checked).map(cb => cb.value.trim()).filter(Boolean);
+    const emailFilter = els.emailFilter.value;
+    const designatedRaw = Number(els.designatedLine.value) || null;
+    const designatedIndex0 = (designatedRaw && Number.isFinite(designatedRaw) && designatedRaw >= 1) ? (designatedRaw - 1) : null;
+    const file = els.fileInput.files && els.fileInput.files[0];
+    const useRandom = !!els.randomMode.checked;
+
+    if(useRandom){
+      els.results.innerHTML = '';
+      let internalMultiplier = remoteEnabled ? 3 : 1;
+      let internalSample = Math.min(Math.max(N * internalMultiplier, N), 5000);
+      let candidates = await reservoirSampleMatches({
+        sourceFile: file || null,
+        sampleSize: N,
+        designatedIndex0,
+        keywords,
+        emailFilter,
+        internalSample
+      });
+
+      let remoteSeen = new Set();
+      if(remoteEnabled && candidates.length>0){
+        remoteSeen = await remoteCheckCandidates(candidates);
+      }
+
+      let filtered = [];
+      for(const c of candidates){
+        const key = (c||'').trim();
+        if(globalSeen.has(key)) continue;
+        if(remoteSeen.has(key)) continue;
+        if(filtered.indexOf(c)===-1) filtered.push(c);
+        if(filtered.length >= N) break;
+      }
+
+      let attempts = 0;
+      while(filtered.length < N && remoteEnabled && attempts < 2){
+        attempts++;
+        internalMultiplier *= 2;
+        internalSample = Math.min(Math.max(N * internalMultiplier, N), 10000);
+        const more = await reservoirSampleMatches({
+          sourceFile: file || null,
+          sampleSize: N,
+          designatedIndex0,
+          keywords,
+          emailFilter,
+          internalSample
+        });
+        const newCandidates = more.filter(x => candidates.indexOf(x) === -1);
+        if(newCandidates.length === 0) break;
+        const chunk = 500;
+        for(let i=0;i<newCandidates.length;i+=chunk){
+          const slice = newCandidates.slice(i,i+chunk);
+          const seenSet = await remoteCheckCandidates(slice);
+          for(const s of slice){
+            const key = s.trim();
+            if(globalSeen.has(key) || seenSet.has(key)) continue;
+            if(filtered.indexOf(s)===-1) filtered.push(s);
+            if(filtered.length >= N) break;
+          }
+          if(filtered.length >= N) break;
+        }
+        candidates = candidates.concat(newCandidates);
+      }
+
+      const chosen = filtered.slice(0, N);
+      for(const ln of chosen){
+        const key = (ln||'').trim();
+        if(globalSeen.has(key)) continue;
+        globalSeen.add(key);
+        resultsSet.push(ln);
+        appendResultLine(ln);
+      }
+
+      if(els.persistLocal.checked){
+        try{ localStorage.setItem(LOCAL_SEEN_KEY, JSON.stringify(Array.from(globalSeen))); }catch(e){ console.warn(e); }
+      }
+
+      if(remoteEnabled && session.sessionToken && resultsSet.length>0){
+        await remoteReportDisplayed(resultsSet);
+      }
+
+      els.resultsMeta.textContent = `${resultsSet.length} found (random sample up to ${N})`;
+      els.downloadBtn.disabled = (resultsSet.length === 0);
+      if(resultsSet.length === 0) showError('No matching lines found after excluding already seen lines.');
+      els.searchBtn.disabled = false;
+      return;
+    }
+
+    // sequential
+    {
+      let buffer = '';
+      let found = 0;
+      els.results.innerHTML = '';
+      const onChunk = async (text) => {
+        buffer += text;
+        const parts = buffer.split(/\r?\n/);
+        buffer = parts.pop() || '';
+        for(const p of parts){
+          if(found >= N) break;
+          if(p.trim().length === 0) continue;
+          if(globalSeen.has(p.trim())) continue;
+          if(lineMatches(p, keywords, emailFilter)){
+            if(remoteEnabled){
+              const remoteSeenSet = await remoteCheckCandidates([p]);
+              if(remoteSeenSet.has(p)) continue;
+            }
+            globalSeen.add(p.trim());
+            resultsSet.push(p);
+            appendResultLine(p);
+            found++;
+          }
+        }
+      };
+
+      if(file) await readFileInChunks(file, onChunk);
+      else await fetchWithReader(onChunk);
+      if(buffer && resultsSet.length < N){
+        if(buffer.trim().length > 0 && !globalSeen.has(buffer.trim()) && lineMatches(buffer, keywords, emailFilter)){
+          let remoteOk = true;
+          if(remoteEnabled){
+            const s = await remoteCheckCandidates([buffer]);
+            if(s.has(buffer)) remoteOk = false;
+          }
+          if(remoteOk){
+            globalSeen.add(buffer.trim());
+            resultsSet.push(buffer);
+            appendResultLine(buffer);
+          }
+        }
+      }
+
+      if(els.persistLocal.checked){
+        try{ localStorage.setItem(LOCAL_SEEN_KEY, JSON.stringify(Array.from(globalSeen))); }catch(e){ console.warn(e); }
+      }
+      if(remoteEnabled && session.sessionToken && resultsSet.length>0){
+        await remoteReportDisplayed(resultsSet);
+      }
+
+      els.resultsMeta.textContent = `${resultsSet.length} found (first ${N} matches)`;
+      els.downloadBtn.disabled = (resultsSet.length === 0);
+      if(resultsSet.length === 0) showError('No matching lines found.');
+      els.searchBtn.disabled = false;
+      return;
+    }
+
+  }catch(err){
+    console.error(err);
+    showError('Search failed: ' + (err && err.message ? err.message : String(err)));
+    els.searchBtn.disabled = false;
+  }
+}
+
+/* -------------------------
+  Download helper
+---------------------------*/
+function downloadResults(){
+  if(resultsSet.length === 0) return;
+  const blob = new Blob([resultsSet.join('\n')], {type:'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  a.href = url;
+  a.download = `Results[${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}].txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/* -------------------------
+  Wire events
+---------------------------*/
+els.searchBtn.addEventListener('click', performSearch);
+els.downloadBtn.addEventListener('click', downloadResults);
+
+/* attempt server auth when enabling remote dedupe if we already have an id_token */
+els.useRemote.addEventListener('change', async () => {
+  if(els.useRemote.checked && session.idToken && (els.remoteUrl.value||'').trim()){
+    try{
+      const serverBase = els.remoteUrl.value.replace(/\/+$/,'');
+      const r = await fetch(serverBase + '/auth', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ id_token: session.idToken })
+      });
+      if(!r.ok) throw new Error('Auth failed: ' + r.status);
+      const j = await r.json();
+      if(j && j.sessionToken && j.user){
+        session.sessionToken = j.sessionToken;
+        session.user = j.user;
+        session.signedIn = true;
+        updateSignedInUI();
+      }
+    }catch(e){ console.warn('Remote auth failed', e); showError('Remote auth failed. Check remote URL and server.'); }
+  }
+});
+
+/* init UI */
+updateSignedInUI();
+</script>
+</body>
+</html>
