@@ -260,12 +260,21 @@ function showError(msg){
   els.errorBox.textContent = msg;
   setTimeout(()=>{ els.errorBox.style.display = 'none'; }, 6000);
 }
+function cleanLine(line){
+  // domain/path/:user:pass -> user:pass
+  var m = line.match(/^[^\s]+\.[a-zA-Z]{2,}[^\s]*\/\s*:\s*(.+)/);
+  if(m) return m[1].trim();
+  // domain:user:pass -> user:pass (when 3+ colon-separated parts and domain has a dot)
+  var parts = line.split(':');
+  if(parts.length >= 3 && parts[0].indexOf('.') !== -1) return parts.slice(1).join(':').trim();
+  return line.trim();
+}
 function appendResultLine(line){
   if(els.results.textContent.trim() === 'Results will appear here.' || els.results.textContent.trim()==='') els.results.innerHTML = '';
   const d = document.createElement('div');
   d.style.padding = '6px 4px';
   d.style.borderBottom = '1px dashed rgba(12,18,30,0.04)';
-  d.textContent = line;
+  d.textContent = cleanLine(line);
   els.results.appendChild(d);
 }
 
@@ -513,7 +522,7 @@ async function performSearch(){
         const key = (ln||'').trim();
         if(globalSeen.has(key)) continue;
         globalSeen.add(key);
-        resultsSet.push(ln);
+        resultsSet.push(cleanLine(ln));
         appendResultLine(ln);
       }
 
@@ -551,7 +560,7 @@ async function performSearch(){
               if(remoteSeenSet.has(p)) continue;
             }
             globalSeen.add(p.trim());
-            resultsSet.push(p);
+            resultsSet.push(cleanLine(p));
             appendResultLine(p);
             found++;
           }
@@ -569,7 +578,7 @@ async function performSearch(){
           }
           if(remoteOk){
             globalSeen.add(buffer.trim());
-            resultsSet.push(buffer);
+            resultsSet.push(cleanLine(buffer));
             appendResultLine(buffer);
           }
         }
